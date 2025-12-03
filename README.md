@@ -1,6 +1,6 @@
 # Information Retrieval Project
 
-This project implements a Positional Index using Apache Spark (Part 1) and a Search Engine with TF-IDF ranking (Part 2).
+This project implements a Positional Index using Apache Spark (Part 1) and a Search Engine with .TF-IDF ranking (Part 2).
 
 ## Prerequisites
 
