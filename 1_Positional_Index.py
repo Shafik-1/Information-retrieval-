@@ -102,11 +102,7 @@ def main():
         
         # Delete the messy folder
         shutil.rmtree(temp_folder)
-         sc.stop() call in 
-ir.py
- which was causing the AttributeError: 'NoneType' object has no attribute 'setCallSite'.
 
-ir.py
         print(f"SUCCESS: The file is ready at '{final_output_file}'")
     else:
         print("ERROR: Spark did not generate the expected part-00000 file.")
