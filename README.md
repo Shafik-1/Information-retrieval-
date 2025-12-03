@@ -5,7 +5,7 @@ This project implements a Positional Index using Apache Spark (Part 1) and a Sea
 ## Prerequisites
 
 1. **Python 3.x**: Ensure Python is installed.
-2. **Java 8 or 11**: Required for Apache Spark.
+2. **Java 11**: Required for Apache Spark.
    - **Linux**: `sudo apt install openjdk-11-jdk`
    - **Windows**: Download and install JDK 11 from Oracle or OpenJDK. Set `JAVA_HOME` environment variable.
 3. **Apache Spark**:
