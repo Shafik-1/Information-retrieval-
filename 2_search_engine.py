@@ -9,6 +9,11 @@ def natural_sort_key(filename):
     """Sort filenames numerically (1.txt, 2.txt, ..., 10.txt)"""
     return [int(text) if text.isdigit() else text.lower() for text in re.split(r'(\d+)', filename)]
 
+def fmt_doc(doc):
+    """Helper to format doc name (1.txt -> d1)"""
+    base = doc.replace('.txt', '')
+    return f"d{base}"
+
 def load_index(file_path):
     print(f"Loading index from {file_path}...")
     index = {}
@@ -245,9 +250,52 @@ def search(query, index, tf_idf_matrix, idf_dict, doc_norms):
             
     q_norm = math.sqrt(q_norm_sq)
     
-    # Print query term analysis table
-    print("\n--- Query Term Analysis ---")
-    query_analysis_data = []
+    # Print query length
+    print(f"\nquery length {q_norm:.6f}")
+    
+    # Calculate Similarity Scores & Prepare Data for Table
+    scores = []
+    
+    # Get sorted list of matched docs
+    sorted_result_docs = sorted(list(result_docs), key=natural_sort_key)
+    
+    # Calculate similarities and per-term products
+    doc_products = {} # term -> doc -> product_value
+    doc_sums = {} # doc -> sum
+    
+    for doc in sorted_result_docs:
+        d_norm = doc_norms.get(doc, 0)
+        doc_sums[doc] = 0
+        
+        for term, q_w in query_weights.items():
+            product = 0
+            if term in tf_idf_matrix and doc in tf_idf_matrix[term]:
+                d_w = tf_idf_matrix[term][doc]
+                
+                # Calculate normalized q
+                q_normalized = (q_w / q_norm) if q_norm > 0 else 0
+                
+                # Calculate normalized d
+                d_normalized = (d_w / d_norm) if d_norm > 0 else 0
+                
+                product = q_normalized * d_normalized
+                
+            if term not in doc_products:
+                doc_products[term] = {}
+            doc_products[term][doc] = product
+            doc_sums[doc] += product
+            
+        scores.append((doc, doc_sums[doc]))
+
+    # Print Product Table
+    doc_headers = [fmt_doc(d) for d in sorted_result_docs]
+    headers = ["", "tf-raw", "w tf(1+ log tf)", "idf", "tf*idf", "normalized"] + [fmt_doc(d) for d in sorted_result_docs]
+    
+    print("\nquery 1") 
+    print(f"{query}    query                        product (query * matched docs)")
+    
+    table_data = []
+    
     for term in sorted(query_tf.keys()):
         tf_raw = query_tf[term]
         log_tf = 1 + math.log10(tf_raw) if tf_raw > 0 else 0
@@ -255,42 +303,38 @@ def search(query, index, tf_idf_matrix, idf_dict, doc_norms):
         tf_idf = log_tf * idf
         normalized = tf_idf / q_norm if q_norm > 0 else 0
         
-        query_analysis_data.append([
-            term,
-            tf_raw,
-            f"{log_tf:.4f}",
-            f"{idf:.4f}",
-            f"{tf_idf:.4f}",
-            f"{normalized:.4f}"
-        ])
+        row = [
+            term, 
+            tf_raw, 
+            f"{int(log_tf)}" if log_tf == int(log_tf) else f"{log_tf:.6f}",
+            f"{idf:.6f}", 
+            f"{tf_idf:.6f}", 
+            f"{normalized:.6f}"
+        ]
+        
+        for doc in sorted_result_docs:
+            prod = doc_products.get(term, {}).get(doc, 0)
+            row.append(f"{prod:.6f}")
+            
+        table_data.append(row)
+        
+    # Sum row
+    sum_row = ["", "", "", "", "sum"]
+    for doc in sorted_result_docs:
+        sum_row.append(f"{doc_sums[doc]:.6f}")
+    table_data.append(sum_row)
     
-    if query_analysis_data:
-        print(f"{'Term':<15} | {'TF-Raw':<10} | {'log(TF)+1':<12} | {'IDF':<10} | {'TF*IDF':<10} | {'Normalized':<12}")
-        print("-" * 80)
-        for row in query_analysis_data:
-            print(f"{row[0]:<15} | {row[1]:<10} | {row[2]:<12} | {row[3]:<10} | {row[4]:<10} | {row[5]:<12}")
+    print_table(headers, table_data, "")
+
+    # Sort scores by Doc Name for the list printing (to match screenshot order d7, d8, d10)
+    scores_by_doc = sorted(scores, key=lambda x: natural_sort_key(x[0]))
     
-    # Print query length
-    print(f"\nQuery Length: {q_norm:.6f}")
-    
-    scores = []
-    print("\n--- Similarity Scores ---")
-    for doc in result_docs:
-        dot_product = 0
-        d_norm = doc_norms.get(doc, 0)
-        
-        for term, q_w in query_weights.items():
-            if term in tf_idf_matrix and doc in tf_idf_matrix[term]:
-                d_w = tf_idf_matrix[term][doc]
-                dot_product += q_w * d_w
-        
-        sim = 0
-        if q_norm > 0 and d_norm > 0:
-            sim = dot_product / (q_norm * d_norm)
-        
-        print(f"Similarity(q, {doc}) = {sim:.4f}")
-        scores.append((doc, sim))
-        
+    print("")
+    for doc, sim in scores_by_doc:
+        d_name = fmt_doc(doc)
+        print(f"similarity (q , {d_name})  {sim:.6f}")
+
+    # Sort by Similarity Score (descending) for "returned docs"
     scores.sort(key=lambda x: x[1], reverse=True)
         
     # Returned docs
@@ -302,11 +346,6 @@ def main():
         return
 
     # 1. Compute TF
-    # Helper to format doc name
-    def fmt_doc(doc):
-        base = doc.replace('.txt', '')
-        return f"d{base}"
-
     doc_headers = [fmt_doc(d) for d in all_docs]
 
     # 1. Compute TF
