@@ -197,6 +197,11 @@ def search(query, index, tf_idf_matrix, idf_dict, doc_norms):
             
     q_norm = math.sqrt(q_norm_sq)
     
+    # Compute normalized query weights
+    query_norm_weights = {}
+    for term, w in query_weights.items():
+        query_norm_weights[term] = w / q_norm if q_norm > 0 else 0
+    
     # Print query term analysis table
     print("\n--- Query Term Analysis ---")
     query_analysis_data = []
@@ -225,6 +230,95 @@ def search(query, index, tf_idf_matrix, idf_dict, doc_norms):
     # Print query length
     print(f"\nQuery Length: {q_norm:.6f}")
     
+    # NEW: Print document-term contributions table
+    print("\n--- Document-Term Contributions (Normalized Query Weight × Normalized Document TF-IDF) ---")
+    
+    # First, get all unique documents where any query term has non-zero normalized TF-IDF
+    docs_with_nonzero = {}
+    for term in query_tf.keys():
+        if term in tf_idf_matrix:
+            for doc, tf_idf_val in tf_idf_matrix[term].items():
+                if tf_idf_val > 0:
+                    d_norm = doc_norms.get(doc, 0)
+                    normalized_doc_val = tf_idf_val / d_norm if d_norm > 0 else 0
+                    if normalized_doc_val > 0:
+                        if term not in docs_with_nonzero:
+                            docs_with_nonzero[term] = {}
+                        docs_with_nonzero[term][doc] = normalized_doc_val
+    
+    # Print table for each term
+    for term in sorted(query_tf.keys()):
+        if term in docs_with_nonzero:
+            # Get query normalized weight for this term
+            q_norm_weight = query_norm_weights.get(term, 0)
+            
+            print(f"\n{term} (Query Normalized Weight: {q_norm_weight:.4f}):")
+            
+            # Sort documents by natural order
+            sorted_docs = sorted(docs_with_nonzero[term].keys(), key=natural_sort_key)
+            
+            # Prepare data for this term
+            term_data = []
+            for doc in sorted_docs:
+                doc_norm_val = docs_with_nonzero[term][doc]
+                contribution = q_norm_weight * doc_norm_val
+                term_data.append([doc, f"{doc_norm_val:.4f}", f"{contribution:.4f}"])
+            
+            # Print table
+            print(f"{'Document':<10} | {'Doc Norm TF-IDF':<15} | {'Contribution':<15}")
+            print("-" * 45)
+            for row in term_data:
+                print(f"{row[0]:<10} | {row[1]:<15} | {row[2]:<15}")
+            
+            # Print total contribution for this term
+            total_contribution = sum(float(row[2]) for row in term_data)
+            print(f"Total contribution for '{term}': {total_contribution:.4f}")
+    
+    # Print dot product calculation table
+    print("\n--- Dot Product Calculation ---")
+    
+    # Get all documents that appear in any of the docs_with_nonzero
+    all_relevant_docs = set()
+    for term in query_tf.keys():
+        if term in docs_with_nonzero:
+            all_relevant_docs.update(docs_with_nonzero[term].keys())
+    
+    # Sort documents
+    sorted_relevant_docs = sorted(all_relevant_docs, key=natural_sort_key)
+    
+    # Prepare dot product data
+    dot_product_data = []
+    for doc in sorted_relevant_docs:
+        doc_total = 0
+        term_contributions = []
+        
+        for term in sorted(query_tf.keys()):
+            if term in docs_with_nonzero and doc in docs_with_nonzero[term]:
+                q_norm_weight = query_norm_weights.get(term, 0)
+                doc_norm_val = docs_with_nonzero[term][doc]
+                contribution = q_norm_weight * doc_norm_val
+                term_contributions.append(f"{contribution:.4f}")
+                doc_total += contribution
+            else:
+                term_contributions.append("0.0000")
+        
+        dot_product_data.append([doc] + term_contributions + [f"{doc_total:.4f}"])
+    
+    # Print dot product table
+    headers = ["Document"] + [f"{term}" for term in sorted(query_tf.keys())] + ["Total"]
+    col_widths = [10] + [12] * len(query_tf) + [12]
+    
+    # Print header
+    header_str = " | ".join(f"{h:<{col_widths[i]}}" for i, h in enumerate(headers))
+    print(header_str)
+    print("-" * len(header_str))
+    
+    # Print rows
+    for row in dot_product_data:
+        row_str = " | ".join(f"{val:<{col_widths[i]}}" for i, val in enumerate(row))
+        print(row_str)
+    
+    # Calculate similarity scores
     scores = []
     print("\n--- Similarity Scores ---")
     for doc in result_docs:
@@ -245,7 +339,6 @@ def search(query, index, tf_idf_matrix, idf_dict, doc_norms):
         
     scores.sort(key=lambda x: x[1], reverse=True)
     return scores
-
 def main():
     index, all_docs = load_index(OUTPUT_FILE)
     if index is None:
