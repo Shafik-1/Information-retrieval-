@@ -57,9 +57,23 @@ def main():
         return output
 
     # 4. Transformations
+    
+    # Step 1: Tokenize
+    # "List every word found and which document it came from" (and position)
     initial_map = raw_data.flatMap(process_file)
+
+    # Step 2 & 3: Sort and Merge
+    # Spark's groupByKey() handles the "Sort" (shuffling data so same keys are together)
+    # and the "Merge" (grouping values for the same key).
+    
+    # First grouping: Merge positions for the same (Term, DocID)
     doc_term_positions = initial_map.groupByKey().mapValues(list)
+    
+    # Remap to (Term, (DocID, [Positions])) to group by Term next
     term_doc_map = doc_term_positions.map(lambda x: (x[0][0], (x[0][1], x[1])))
+    
+    # Second grouping: Merge all Docs for the same Term
+    # This creates the final entry: Term -> [(Doc1, [Pos]), (Doc2, [Pos])...]
     final_index = term_doc_map.groupByKey().mapValues(list)
 
     # 5. Formatting
@@ -73,6 +87,7 @@ def main():
         full_doc_str = " ; ".join(doc_strings)
         return f"<{term} : {full_doc_str}>"
 
+    # Step 2 (Final Sort): Organize the list alphabetically by Term
     final_sorted = final_index.sortByKey().map(format_output)
 
     # 6. Save Logic (Spark part)

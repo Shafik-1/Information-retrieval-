@@ -101,7 +101,8 @@ def get_phrase_docs(index, phrase):
         if not present:
             continue
             
-        # Check positions for phrase
+        # Phase 3: Phrase Query Methodology
+        # Requirement: Check if Any_Position(Term B) == Any_Position(Term A) + 1
         # positions of term[i] must contain p such that term[i+1] has p+1
         current_positions = index[terms[0]][doc]
         
@@ -156,21 +157,52 @@ def search(query, index, tf_idf_matrix, idf_dict, doc_norms):
         
     result_docs = None
     
+    # Phase 2: Query Processing Methodology
+    # 1. Conjunctive Queries (AND): "Start Small"
+    # Logic: Sort terms by DF (Ascending) -> Intersect smallest lists first.
+    
+    # Calculate DF for each phrase/term to sort them
+    # Note: For phrases, we need to estimate or just get the first term's DF as a proxy, 
+    # but strictly speaking, we should get the phrase candidate list size. 
+    # However, to avoid computing full phrase matches just for sorting, we can use the DF of the rarest term in the phrase.
+    # For now, let's keep it simple: get the candidate doc count for the FIRST term of the phrase as an estimate.
+    
+    phrase_dfs = []
     for phrase in must_include:
+        # Simple heuristic: Use the DF of the first word in the phrase (if single word, it's exact DF)
+        first_term = phrase.lower().split()[0]
+        df = len(index.get(first_term, {}))
+        phrase_dfs.append((phrase, df))
+    
+    # Sort by DF Ascending ("Start Small")
+    phrase_dfs.sort(key=lambda x: x[1])
+    
+    sorted_phrases = [p[0] for p in phrase_dfs]
+    
+    print(f"DEBUG: Optimized Order (Start Small): {sorted_phrases}")
+
+    result_docs = None
+    
+    for phrase in sorted_phrases:
         docs = get_phrase_docs(index, phrase)
         if result_docs is None:
             result_docs = docs
         else:
+            # Intersect
             result_docs = result_docs.intersection(docs)
             
-    if not result_docs:
-        return []
+        # Optimization: If empty, stop early
+        if not result_docs:
+            return []
         
-    # 2. Exclude docs
+    # Phase 2: Negation (NOT)
+    # Rule: "Filter Last"
+    # Logic: Execute positives first (done above), then subtract NOTs.
     for phrase in must_exclude:
         docs = get_phrase_docs(index, phrase)
         result_docs = result_docs.difference(docs)
         
+    # Phase 4: Ranking Methodology
     # 3. Rank by Similarity (Cosine)
     # Query Vector Q: w_t,q = (1 + log(tf_q)) * idf_t
     
@@ -195,11 +227,93 @@ def search(query, index, tf_idf_matrix, idf_dict, doc_norms):
             query_weights[term] = w
             q_norm_sq += w * w
             
+    # Calculate Query Vector Weights
+    query_tf = {}
+    for term in query_terms:
+        query_tf[term] = query_tf.get(term, 0) + 1
+    
+    # First, calculate q_norm (magnitude of query vector)
+    query_weights = {}
+    q_norm_sq = 0
+    
+    for term, tf in query_tf.items():
+        if term in idf_dict:
+            idf = idf_dict[term]
+            w = (1 + math.log10(tf)) * idf
+            query_weights[term] = w
+            q_norm_sq += w * w
+            
     q_norm = math.sqrt(q_norm_sq)
     
-    # Print query term analysis table
-    print("\n--- Query Term Analysis ---")
-    query_analysis_data = []
+    # Print query length
+    print(f"\nquery length {q_norm:.6f}")
+    
+    # Calculate Similarity Scores & Prepare Data for Table
+    scores = []
+    
+    # We need to print a table with columns:
+    # tf-raw | v tf(1+ log tf) | idf | tf*idf | normalized | doc X | doc Y ...
+    
+    # Get sorted list of matched docs
+    sorted_result_docs = sorted(list(result_docs), key=natural_sort_key)
+    
+    # Calculate similarities and per-term products
+    doc_products = {} # term -> doc -> product_value
+    doc_sums = {} # doc -> sum
+    
+    for doc in sorted_result_docs:
+        dot_product = 0
+        d_norm = doc_norms.get(doc, 0)
+        doc_sums[doc] = 0
+        
+        for term, q_w in query_weights.items():
+            product = 0
+            if term in tf_idf_matrix and doc in tf_idf_matrix[term]:
+                d_w = tf_idf_matrix[term][doc]
+                
+                # Check how product was calculated in user image
+                # q_w is (1+log(tf))*idf
+                # Wait, image table "normalized" for query term "fools" is 0.518
+                # Image table "doc 7" product is 0.1685.
+                # Normalized doc 7 "fools" weight is 0.32525.
+                # 0.518 * 0.32525 = 0.168.
+                # Use NORMALIZED query weight * NORMALIZED doc weight?
+                # Formula: Sum(q_norm_w * d_norm_w) = Cosine(q, d) 
+                # because (A . B) / (|A| |B|) = (A/|A|) . (B/|B|)
+                # So yes, the product is q_normalized * d_normalized.
+                
+                # Calculate normalized q
+                q_normalized = (q_w / q_norm) if q_norm > 0 else 0
+                
+                # Calculate normalized d
+                # We need raw d_w (tf*idf)
+                d_normalized = (d_w / d_norm) if d_norm > 0 else 0
+                
+                product = q_normalized * d_normalized
+                
+            if term not in doc_products:
+                doc_products[term] = {}
+            doc_products[term][doc] = product
+            doc_sums[doc] += product
+            
+        scores.append((doc, doc_sums[doc]))
+
+    # Print Product Table
+    # Headers
+    # Helper to format doc name
+    def fmt_doc(doc):
+        base = doc.replace('.txt', '')
+        return f"d{base}"
+
+    doc_headers = [fmt_doc(d) for d in sorted_result_docs]
+    headers = ["", "tf-raw", "w tf(1+ log tf)", "idf", "tf*idf", "normalized"] + [f"doc {d.replace('.txt','')}" for d in sorted_result_docs]
+    
+    print("\nquery 1") 
+    # Just printing query terms as title? "fools fear in    query" 
+    print(f"{query}    query                        product (query * matched docs)")
+    
+    table_data = []
+    
     for term in sorted(query_tf.keys()):
         tf_raw = query_tf[term]
         log_tf = 1 + math.log10(tf_raw) if tf_raw > 0 else 0
@@ -207,43 +321,50 @@ def search(query, index, tf_idf_matrix, idf_dict, doc_norms):
         tf_idf = log_tf * idf
         normalized = tf_idf / q_norm if q_norm > 0 else 0
         
-        query_analysis_data.append([
-            term,
-            tf_raw,
-            f"{log_tf:.4f}",
-            f"{idf:.4f}",
-            f"{tf_idf:.4f}",
-            f"{normalized:.4f}"
-        ])
+        row = [
+            term, 
+            tf_raw, 
+            f"{int(log_tf)}" if log_tf == int(log_tf) else f"{log_tf:.6f}", # Image shows integer 1
+            f"{idf:.6f}", 
+            f"{tf_idf:.6f}", 
+            f"{normalized:.6f}" # Matches 0.518 in image (approx)
+        ]
+        
+        for doc in sorted_result_docs:
+            prod = doc_products.get(term, {}).get(doc, 0)
+            row.append(f"{prod:.6f}")
+            
+        table_data.append(row)
+        
+    # Sum row
+    sum_row = ["", "", "", "sum", "", ""] 
+    # "sum" appears under idf? No, image result shows "sum" in a box at bottom right.
+    # Actually the image has 'sum' under the column before doc columns? 
+    # No, it says "sum" then the values.
+    # Let's align "sum" label with "normalized" column?
+    # Image: "sum" is in a separate small box to the left of the totals.
+    # Let's put "sum" in "normalized" column.
+    sum_row = ["", "", "", "", "sum"]
+    for doc in sorted_result_docs:
+        sum_row.append(f"{doc_sums[doc]:.6f}")
+    table_data.append(sum_row)
     
-    if query_analysis_data:
-        print(f"{'Term':<15} | {'TF-Raw':<10} | {'log(TF)+1':<12} | {'IDF':<10} | {'TF*IDF':<10} | {'Normalized':<12}")
-        print("-" * 80)
-        for row in query_analysis_data:
-            print(f"{row[0]:<15} | {row[1]:<10} | {row[2]:<12} | {row[3]:<10} | {row[4]:<10} | {row[5]:<12}")
+    # Print product table (already done above)
+    print_table(headers, table_data, "")
+
+    # Sort scores by Doc Name for the list printing (to match screenshot order d7, d8, d10)
+    scores_by_doc = sorted(scores, key=lambda x: natural_sort_key(x[0]))
     
-    # Print query length
-    print(f"\nQuery Length: {q_norm:.6f}")
-    
-    scores = []
-    print("\n--- Similarity Scores ---")
-    for doc in result_docs:
-        dot_product = 0
-        d_norm = doc_norms.get(doc, 0)
-        
-        for term, q_w in query_weights.items():
-            if term in tf_idf_matrix and doc in tf_idf_matrix[term]:
-                d_w = tf_idf_matrix[term][doc]
-                dot_product += q_w * d_w
-        
-        sim = 0
-        if q_norm > 0 and d_norm > 0:
-            sim = dot_product / (q_norm * d_norm)
-        
-        print(f"Similarity(q, {doc}) = {sim:.4f}")
-        scores.append((doc, sim))
-        
+    print("")
+    for doc, sim in scores_by_doc:
+        d_name = fmt_doc(doc)
+        print(f"similarity (q , {d_name})  {sim:.6f}")
+
+    # Sort by Similarity Score (descending) for "returned docs"
     scores.sort(key=lambda x: x[1], reverse=True)
+        
+    # Returned docs
+    print(f"returned docs        {','.join([fmt_doc(doc) for doc, sim in scores])}")
     return scores
 
 def main():
@@ -252,9 +373,17 @@ def main():
         return
 
     # 1. Compute TF
+    # Helper to format doc name
+    def fmt_doc(doc):
+        base = doc.replace('.txt', '')
+        return f"d{base}"
+
+    doc_headers = [fmt_doc(d) for d in all_docs]
+
+    # 1. Compute TF
     tf_matrix = {}
-    print("\nComputing Term Frequency (TF)...")
-    tf_headers = ["Term"] + all_docs
+    print("\nTerm Frequency(TF)")
+    tf_headers = [""] + doc_headers
     tf_data = []
     sorted_terms = sorted(index.keys())
     for term in sorted_terms:
@@ -265,22 +394,32 @@ def main():
             tf_matrix[term][doc] = count
             row.append(count)
         tf_data.append(row)
-    print_table(tf_headers, tf_data, "Term Frequency (TF)")
+    print_table(tf_headers, tf_data, "")
     
     # 2.5. Compute (1 + log(TF))
-    print("\nComputing (1 + log(TF))...")
+    print("\nw tf(1+ log tf)")
     log_tf_data = []
     for term in sorted_terms:
         row = [term]
         for doc in all_docs:
             tf = tf_matrix[term][doc]
             log_tf_val = 1 + math.log10(tf) if tf > 0 else 0
-            row.append(int(log_tf_val))
+            # Display as integer if it's 1 or 0 (like the image implies for simple counts) 
+            # BUT image shows "1" for 1, let's keep it simple. 
+            # Actually image 2 shows "1", "0".
+            # The calculation uses floats, but display might be integer-like if strict integer.
+            # Let's use standard formatting but maybe .6f if not int?
+            # Image 2 shows "1", "0". Let's stick to int for display if it matches, else float.
+            # Wait, image 2 has "d2" with "calpurnia" = 1.
+            # If we look closer at image 2 top table "w tf...", it has just 1s and 0s.
+            # Let's output as is, maybe cast to int if it's exactly int.
+            # For safety, let's use the value.
+            row.append(f"{log_tf_val:.6f}".rstrip('0').rstrip('.') if log_tf_val == int(log_tf_val) else f"{log_tf_val:.6f}")
         log_tf_data.append(row)
-    print_table(tf_headers, log_tf_data, "(1 + log(TF)) Matrix")
+    print_table(tf_headers, log_tf_data, "")
 
     # 2. Compute IDF
-    # print("\nComputing IDF...")
+    # Image 3 shows only "df", "idf" columns
     N = len(all_docs)
     idf_dict = {}
     idf_data = []
@@ -288,11 +427,13 @@ def main():
         df = len(index[term])
         idf = math.log10(N / df) if df > 0 else 0
         idf_dict[term] = idf
-        idf_data.append([term, df, f"{idf:.4f}"])
-    print_table(["Term", "DF", "IDF"], idf_data, "Document Frequency (DF) and Inverse Document Frequency (IDF)")
+        idf_data.append([term, df, f"{idf:.6f}"])
+    
+    # "df", "idf" columns (Header row in image 3 seems to include 'df' 'idf')
+    print_table(["", "df", "idf"], idf_data, "")
 
     # 3. Compute TF-IDF
-    print("\nComputing TF-IDF Matrix...")
+    print("\ntf*idf")
     tf_idf_matrix = {}
     tf_idf_data = []
     for term in sorted_terms:
@@ -302,12 +443,23 @@ def main():
             tf = tf_matrix[term][doc]
             idf = idf_dict[term]
             val = tf * idf
+            # Log normalized logic?
+            # Wait, the previous step calculated '1+log(tf)'. 
+            # The standard TF-IDF usually uses raw TF or log TF.
+            # The user's image title "w tf(1+ log tf)" suggests we should use that weight.
+            # Let's check the values.
+            # Image 2: 'antony' in 'd1'. TF=1 -> w=1. IDF=0.5228. tf*idf=0.5228. 1*0.5228 = 0.5228.
+            # 'brutus' d4 (where TF=1, but let's check d1).
+            # It seems it uses the WEIGHED TF (1+log(tf)).
+            log_tf_val = 1 + math.log10(tf) if tf > 0 else 0
+            val = log_tf_val * idf
+            
             tf_idf_matrix[term][doc] = val
-            row.append(f"{val:.4f}")
+            row.append(f"{val:.6f}")
         tf_idf_data.append(row)
-    print_table(tf_headers, tf_idf_data, "TF-IDF Matrix")
+    print_table(tf_headers, tf_idf_data, "")
 
-    # 4. Compute Doc Lengths (for Cosine Similarity)
+    # 4. Compute Doc Lengths
     doc_norms = {}
     for doc in all_docs:
         norm_sq = 0
@@ -316,18 +468,16 @@ def main():
             norm_sq += val * val
         doc_norms[doc] = math.sqrt(norm_sq)
 
-    # print_table(["Term", "IDF"], idf_data, "Inverse Document Frequency (IDF)")
-
     # 4.5. Print Document Lengths
-    print("\nComputing Document Lengths...")
-    doc_length_data = []
+    # Format: "d1 length    1.373462"
+    print("")
     for doc in sorted(all_docs, key=natural_sort_key):
         length = doc_norms[doc]
-        doc_length_data.append([doc, f"{length:.4f}"])
-    print_table(["Document", "Length"], doc_length_data, "Document Lengths")
+        d_name = fmt_doc(doc)
+        print(f"{d_name} length {length:.6f}")
 
     # 3.5. Compute Normalized TF-IDF
-    print("\nComputing Normalized TF-IDF Matrix...")
+    print("\nNormalized tf.idf")
     normalized_tf_idf_data = []
     for term in sorted_terms:
         row = [term]
@@ -335,9 +485,9 @@ def main():
             tf_idf_val = tf_idf_matrix[term][doc]
             d_norm = doc_norms[doc]
             normalized_val = tf_idf_val / d_norm if d_norm > 0 else 0
-            row.append(f"{normalized_val:.4f}")
+            row.append(f"{normalized_val:.6f}")
         normalized_tf_idf_data.append(row)
-    print_table(tf_headers, normalized_tf_idf_data, "Normalized TF-IDF Matrix")
+    print_table(tf_headers, normalized_tf_idf_data, "")
 
     # 5. Search Interface
     if len(sys.argv) > 1:
