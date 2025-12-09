@@ -245,75 +245,9 @@ def search(query, index, tf_idf_matrix, idf_dict, doc_norms):
             
     q_norm = math.sqrt(q_norm_sq)
     
-    # Print query length
-    print(f"\nquery length {q_norm:.6f}")
-    
-    # Calculate Similarity Scores & Prepare Data for Table
-    scores = []
-    
-    # We need to print a table with columns:
-    # tf-raw | v tf(1+ log tf) | idf | tf*idf | normalized | doc X | doc Y ...
-    
-    # Get sorted list of matched docs
-    sorted_result_docs = sorted(list(result_docs), key=natural_sort_key)
-    
-    # Calculate similarities and per-term products
-    doc_products = {} # term -> doc -> product_value
-    doc_sums = {} # doc -> sum
-    
-    for doc in sorted_result_docs:
-        dot_product = 0
-        d_norm = doc_norms.get(doc, 0)
-        doc_sums[doc] = 0
-        
-        for term, q_w in query_weights.items():
-            product = 0
-            if term in tf_idf_matrix and doc in tf_idf_matrix[term]:
-                d_w = tf_idf_matrix[term][doc]
-                
-                # Check how product was calculated in user image
-                # q_w is (1+log(tf))*idf
-                # Wait, image table "normalized" for query term "fools" is 0.518
-                # Image table "doc 7" product is 0.1685.
-                # Normalized doc 7 "fools" weight is 0.32525.
-                # 0.518 * 0.32525 = 0.168.
-                # Use NORMALIZED query weight * NORMALIZED doc weight?
-                # Formula: Sum(q_norm_w * d_norm_w) = Cosine(q, d) 
-                # because (A . B) / (|A| |B|) = (A/|A|) . (B/|B|)
-                # So yes, the product is q_normalized * d_normalized.
-                
-                # Calculate normalized q
-                q_normalized = (q_w / q_norm) if q_norm > 0 else 0
-                
-                # Calculate normalized d
-                # We need raw d_w (tf*idf)
-                d_normalized = (d_w / d_norm) if d_norm > 0 else 0
-                
-                product = q_normalized * d_normalized
-                
-            if term not in doc_products:
-                doc_products[term] = {}
-            doc_products[term][doc] = product
-            doc_sums[doc] += product
-            
-        scores.append((doc, doc_sums[doc]))
-
-    # Print Product Table
-    # Headers
-    # Helper to format doc name
-    def fmt_doc(doc):
-        base = doc.replace('.txt', '')
-        return f"d{base}"
-
-    doc_headers = [fmt_doc(d) for d in sorted_result_docs]
-    headers = ["", "tf-raw", "w tf(1+ log tf)", "idf", "tf*idf", "normalized"] + [f"doc {d.replace('.txt','')}" for d in sorted_result_docs]
-    
-    print("\nquery 1") 
-    # Just printing query terms as title? "fools fear in    query" 
-    print(f"{query}    query                        product (query * matched docs)")
-    
-    table_data = []
-    
+    # Print query term analysis table
+    print("\n--- Query Term Analysis ---")
+    query_analysis_data = []
     for term in sorted(query_tf.keys()):
         tf_raw = query_tf[term]
         log_tf = 1 + math.log10(tf_raw) if tf_raw > 0 else 0
@@ -321,52 +255,47 @@ def search(query, index, tf_idf_matrix, idf_dict, doc_norms):
         tf_idf = log_tf * idf
         normalized = tf_idf / q_norm if q_norm > 0 else 0
         
-        row = [
-            term, 
-            tf_raw, 
-            f"{int(log_tf)}" if log_tf == int(log_tf) else f"{log_tf:.6f}", # Image shows integer 1
-            f"{idf:.6f}", 
-            f"{tf_idf:.6f}", 
-            f"{normalized:.6f}" # Matches 0.518 in image (approx)
-        ]
-        
-        for doc in sorted_result_docs:
-            prod = doc_products.get(term, {}).get(doc, 0)
-            row.append(f"{prod:.6f}")
-            
-        table_data.append(row)
-        
-    # Sum row
-    sum_row = ["", "", "", "sum", "", ""] 
-    # "sum" appears under idf? No, image result shows "sum" in a box at bottom right.
-    # Actually the image has 'sum' under the column before doc columns? 
-    # No, it says "sum" then the values.
-    # Let's align "sum" label with "normalized" column?
-    # Image: "sum" is in a separate small box to the left of the totals.
-    # Let's put "sum" in "normalized" column.
-    sum_row = ["", "", "", "", "sum"]
-    for doc in sorted_result_docs:
-        sum_row.append(f"{doc_sums[doc]:.6f}")
-    table_data.append(sum_row)
+        query_analysis_data.append([
+            term,
+            tf_raw,
+            f"{log_tf:.4f}",
+            f"{idf:.4f}",
+            f"{tf_idf:.4f}",
+            f"{normalized:.4f}"
+        ])
     
-    # Print product table (already done above)
-    print_table(headers, table_data, "")
-
-    # Sort scores by Doc Name for the list printing (to match screenshot order d7, d8, d10)
-    scores_by_doc = sorted(scores, key=lambda x: natural_sort_key(x[0]))
+    if query_analysis_data:
+        print(f"{'Term':<15} | {'TF-Raw':<10} | {'log(TF)+1':<12} | {'IDF':<10} | {'TF*IDF':<10} | {'Normalized':<12}")
+        print("-" * 80)
+        for row in query_analysis_data:
+            print(f"{row[0]:<15} | {row[1]:<10} | {row[2]:<12} | {row[3]:<10} | {row[4]:<10} | {row[5]:<12}")
     
-    print("")
-    for doc, sim in scores_by_doc:
-        d_name = fmt_doc(doc)
-        print(f"similarity (q , {d_name})  {sim:.6f}")
-
-    # Sort by Similarity Score (descending) for "returned docs"
+    # Print query length
+    print(f"\nQuery Length: {q_norm:.6f}")
+    
+    scores = []
+    print("\n--- Similarity Scores ---")
+    for doc in result_docs:
+        dot_product = 0
+        d_norm = doc_norms.get(doc, 0)
+        
+        for term, q_w in query_weights.items():
+            if term in tf_idf_matrix and doc in tf_idf_matrix[term]:
+                d_w = tf_idf_matrix[term][doc]
+                dot_product += q_w * d_w
+        
+        sim = 0
+        if q_norm > 0 and d_norm > 0:
+            sim = dot_product / (q_norm * d_norm)
+        
+        print(f"Similarity(q, {doc}) = {sim:.4f}")
+        scores.append((doc, sim))
+        
     scores.sort(key=lambda x: x[1], reverse=True)
         
     # Returned docs
     print(f"returned docs        {','.join([fmt_doc(doc) for doc, sim in scores])}")
     return scores
-
 def main():
     index, all_docs = load_index(OUTPUT_FILE)
     if index is None:
