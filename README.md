@@ -1,71 +1,65 @@
 # Information Retrieval Project
 
-This project implements a Positional Index using Apache Spark (Part 1) and a Search Engine with TF-IDF ranking (Part 2).
+This project implements a **Positional Index** using Apache Spark (Part 1) and a **Search Engine** with Query Optimization and TF-IDF ranking (Part 2).
+
+## Methodology
+
+### Part 1: Indexing (MapReduce)
+
+We utilize a **MapReduce** approach on Apache Spark to build the index:
+
+1.  **Tokenize (Map):** Reads documents and maps every word to `(Term, (DocID, Position))`.
+2.  **Sort (Shuffle):** Spark groups data so all occurrences of a term are together.
+3.  **Merge (Reduce):** Collapses the list into a dictionary format: `Term -> DocID: [Pos1, Pos2...]`.
+
+### Part 2: Search Engine Logic
+
+1.  **Query Optimization ("Start Small"):** For `AND` queries, terms are sorted by **Document Frequency (DF)**. The engine processes the rarest terms first (smallest lists) to minimize intersection cost.
+2.  **Phrase Queries:** Implements positional logic `pos(B) == pos(A) + 1` to ensure exact phrase matches.
+3.  **Ranking:**
+    - **TF-IDF:** Uses `(1 + log(tf)) * idf` weighting.
+    - **Cosine Similarity:** Ranks results by the cosine angle between Query and Document vectors.
+    - **Product Table:** Displays a detailed breakdown of `q_normalized * d_normalized` for every matching document.
 
 ## Prerequisites
 
-1. **Python 3.x**: Ensure Python is installed.
-2. **Java 8 or 11**: Required for Apache Spark.
-   - **Linux**: `sudo apt install openjdk-11-jdk`
-   - **Windows**: Download and install JDK 11 from Oracle or OpenJDK. Set `JAVA_HOME` environment variable.
-3. **Apache Spark**:
-   - **Linux**: Download from [spark.apache.org](https://spark.apache.org/downloads.html), extract, and set `SPARK_HOME` and add `bin` to `PATH`.
-   - **Windows**:
-     - Download Spark and extract it (e.g., to `C:\Spark`).
-     - Set `SPARK_HOME` environment variable to your Spark folder.
-     - Add `%SPARK_HOME%\bin` to your `Path`.
-     - **Winutils**: You may need `winutils.exe` for Hadoop on Windows. Download it and place it in `%SPARK_HOME%\bin` or a separate `hadoop\bin` folder (set `HADOOP_HOME` accordingly).
-
-## Installation
-
-1. **Clone/Download** the project to your local machine.
-2. **Dependencies**:
-   - **Part 1 (Spark App)**: Relies on your global Apache Spark installation. No `pip install` required if using `spark-submit`.
-   - **Part 2 (Search Engine)**: Uses standard Python libraries (`math`, `sys`, `os`). No external dependencies.
+1.  **Python 3.x**: Ensure Python is installed.
+2.  **Java 8 or 11**: Required for Apache Spark.
+3.  **Apache Spark**: Installed and configured with `SPARK_HOME`.
 
 ## Usage
 
 ### Part 1: Positional Index (Spark App)
 
-This script reads the dataset, builds a positional index, and saves it to `output.txt`.
-
-**Command:**
+Reads dataset, builds index, and saves to `output.txt`.
 
 ```bash
-spark-submit ir.py
+spark-submit 1_Positional_Index.py
 ```
 
-- **Note**: Ensure the `input_path` in `ir.py` points to your dataset folder.
-  - **Windows Users**: Update this path to your local path, e.g., `file:///C:/Users/YourName/Project/dataset/*.txt`.
-
-**Output:**
-
-- Generates `output.txt` containing the positional index.
+- **Result:** Generates `output.txt`.
 
 ### Part 2: Search Engine
 
-This script parses `output.txt`, computes TF-IDF, and allows you to search the documents.
-
-**Command:**
+Parses `output.txt` and performs ranked searches.
 
 ```bash
-python search_engine.py 'antony' AND 'brutus'
+python3 2_search_engine.py "fools fear in"
 ```
 
-or 
+- **Detailed Output:** Prints TF, TF-IDF, IDF, and Normalized matrices.
+- **Visual Format:** Matches the "Product Table" structure (Rows: Query Terms, Cols: Docs).
+- **Precision:** All values displayed to **6 decimal places**.
+- **Auto-Logging:** Automatically saves all terminal output to `response.txt`.
+  - **Versioning:** If `response.txt` exists, it saves to `response1.txt`, `response2.txt`, etc.
 
-```bash
-python3 search_engine.py 'antony' AND 'brutus'
-```
+**Supported Queries:**
 
-**Search Queries:**
+- **Phrase:** `"fools fear in"`
+- **Boolean AND:** `'antony' AND 'brutus'`
+- **Boolean NOT:** `'angels' AND NOT 'fools'`
 
-- **Phrase Search**: `"angels fools"`
-- **Boolean AND**: `'antony' AND 'brutus'`
-- **Boolean AND NOT**: `'angels' AND NOT 'fools'`
+## Clean Code Structure
 
-**Example:**
-
-```bash
-python search_engine.py 'antony' AND 'brutus'
-```
+- **1_Positional_Index.py**: Minimalist Spark logic with clear `Step 1`, `Step 2` comments.
+- **2_search_engine.py**: Professional, streamlined search logic without verbose comments.

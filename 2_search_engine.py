@@ -10,7 +10,6 @@ def natural_sort_key(filename):
     return [int(text) if text.isdigit() else text.lower() for text in re.split(r'(\d+)', filename)]
 
 def fmt_doc(doc):
-    """Helper to format doc name (1.txt -> d1)"""
     base = doc.replace('.txt', '')
     return f"d{base}"
 
@@ -106,9 +105,7 @@ def get_phrase_docs(index, phrase):
         if not present:
             continue
             
-        # Phase 3: Phrase Query Methodology
-        # Requirement: Check if Any_Position(Term B) == Any_Position(Term A) + 1
-        # positions of term[i] must contain p such that term[i+1] has p+1
+        # Positional Check
         current_positions = index[terms[0]][doc]
         
         for i in range(1, len(terms)):
@@ -130,12 +127,6 @@ def get_phrase_docs(index, phrase):
     return matched_docs
 
 def parse_query(query):
-    # Split by ' AND '
-    # Handle 'NOT '
-    # Case-insensitive split is harder, but let's assume user uses AND/NOT or we normalize
-    # For now, let's normalize the operators by replacing ' and ' with ' AND ' etc if we wanted, 
-    # but the requirement says "AND", "AND NOT".
-    
     parts = query.split(' AND ')
     must_include = []
     must_exclude = []
@@ -162,24 +153,14 @@ def search(query, index, tf_idf_matrix, idf_dict, doc_norms):
         
     result_docs = None
     
-    # Phase 2: Query Processing Methodology
-    # 1. Conjunctive Queries (AND): "Start Small"
-    # Logic: Sort terms by DF (Ascending) -> Intersect smallest lists first.
-    
-    # Calculate DF for each phrase/term to sort them
-    # Note: For phrases, we need to estimate or just get the first term's DF as a proxy, 
-    # but strictly speaking, we should get the phrase candidate list size. 
-    # However, to avoid computing full phrase matches just for sorting, we can use the DF of the rarest term in the phrase.
-    # For now, let's keep it simple: get the candidate doc count for the FIRST term of the phrase as an estimate.
-    
+    # Optimize Query Order (Start Small)
     phrase_dfs = []
     for phrase in must_include:
-        # Simple heuristic: Use the DF of the first word in the phrase (if single word, it's exact DF)
         first_term = phrase.lower().split()[0]
         df = len(index.get(first_term, {}))
         phrase_dfs.append((phrase, df))
     
-    # Sort by DF Ascending ("Start Small")
+    # Sort by DF Ascending
     phrase_dfs.sort(key=lambda x: x[1])
     
     sorted_phrases = [p[0] for p in phrase_dfs]
@@ -200,18 +181,12 @@ def search(query, index, tf_idf_matrix, idf_dict, doc_norms):
         if not result_docs:
             return []
         
-    # Phase 2: Negation (NOT)
-    # Rule: "Filter Last"
-    # Logic: Execute positives first (done above), then subtract NOTs.
+    # Negation (NOT)
     for phrase in must_exclude:
         docs = get_phrase_docs(index, phrase)
         result_docs = result_docs.difference(docs)
         
-    # Phase 4: Ranking Methodology
-    # 3. Rank by Similarity (Cosine)
-    # Query Vector Q: w_t,q = (1 + log(tf_q)) * idf_t
-    
-    # Collect all unique terms in query
+    # Ranking
     query_terms = []
     for phrase in must_include:
         query_terms.extend(phrase.lower().split())
@@ -250,10 +225,9 @@ def search(query, index, tf_idf_matrix, idf_dict, doc_norms):
             
     q_norm = math.sqrt(q_norm_sq)
     
-    # Print query length
     print(f"\nquery length {q_norm:.6f}")
     
-    # Calculate Similarity Scores & Prepare Data for Table
+    # Calculate Similarity Scores
     scores = []
     
     # Get sorted list of matched docs
@@ -348,7 +322,6 @@ def main():
     # 1. Compute TF
     doc_headers = [fmt_doc(d) for d in all_docs]
 
-    # 1. Compute TF
     tf_matrix = {}
     print("\nTerm Frequency(TF)")
     tf_headers = [""] + doc_headers
@@ -372,16 +345,6 @@ def main():
         for doc in all_docs:
             tf = tf_matrix[term][doc]
             log_tf_val = 1 + math.log10(tf) if tf > 0 else 0
-            # Display as integer if it's 1 or 0 (like the image implies for simple counts) 
-            # BUT image shows "1" for 1, let's keep it simple. 
-            # Actually image 2 shows "1", "0".
-            # The calculation uses floats, but display might be integer-like if strict integer.
-            # Let's use standard formatting but maybe .6f if not int?
-            # Image 2 shows "1", "0". Let's stick to int for display if it matches, else float.
-            # Wait, image 2 has "d2" with "calpurnia" = 1.
-            # If we look closer at image 2 top table "w tf...", it has just 1s and 0s.
-            # Let's output as is, maybe cast to int if it's exactly int.
-            # For safety, let's use the value.
             row.append(f"{log_tf_val:.6f}".rstrip('0').rstrip('.') if log_tf_val == int(log_tf_val) else f"{log_tf_val:.6f}")
         log_tf_data.append(row)
     print_table(tf_headers, log_tf_data, "")
@@ -411,14 +374,6 @@ def main():
             tf = tf_matrix[term][doc]
             idf = idf_dict[term]
             val = tf * idf
-            # Log normalized logic?
-            # Wait, the previous step calculated '1+log(tf)'. 
-            # The standard TF-IDF usually uses raw TF or log TF.
-            # The user's image title "w tf(1+ log tf)" suggests we should use that weight.
-            # Let's check the values.
-            # Image 2: 'antony' in 'd1'. TF=1 -> w=1. IDF=0.5228. tf*idf=0.5228. 1*0.5228 = 0.5228.
-            # 'brutus' d4 (where TF=1, but let's check d1).
-            # It seems it uses the WEIGHED TF (1+log(tf)).
             log_tf_val = 1 + math.log10(tf) if tf > 0 else 0
             val = log_tf_val * idf
             
@@ -473,5 +428,32 @@ def main():
             except (EOFError, KeyboardInterrupt):
                 break
 
+class Logger:
+    def __init__(self):
+        self.terminal = sys.stdout
+        self.filename = self._get_unique_filename()
+        self.log = open(self.filename, "w")
+        print(f"Saving output to {self.filename}...")
+
+    def _get_unique_filename(self):
+        base = "response"
+        ext = ".txt"
+        if not os.path.exists(base + ext):
+            return base + ext
+        i = 1
+        while os.path.exists(f"{base}{i}{ext}"):
+            i += 1
+        return f"{base}{i}{ext}"
+
+    def write(self, message):
+        self.terminal.write(message)
+        self.log.write(message)
+        self.log.flush()  # Ensure immediate write to disk
+
+    def flush(self):
+        self.terminal.flush()
+        self.log.flush()
+
 if __name__ == "__main__":
+    sys.stdout = Logger()
     main()
