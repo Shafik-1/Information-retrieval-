@@ -1,8 +1,13 @@
 import math
 import sys
 import os
+import re
 
 OUTPUT_FILE = "output.txt"
+
+def natural_sort_key(filename):
+    """Sort filenames numerically (1.txt, 2.txt, ..., 10.txt)"""
+    return [int(text) if text.isdigit() else text.lower() for text in re.split(r'(\d+)', filename)]
 
 def load_index(file_path):
     print(f"Loading index from {file_path}...")
@@ -48,7 +53,7 @@ def load_index(file_path):
                 index[term][doc_name] = positions
                 all_docs.add(doc_name)
                 
-    return index, sorted(list(all_docs))
+    return index, sorted(list(all_docs), key=natural_sort_key)
 
 def print_table(headers, data, title):
     print(f"\n--- {title} ---")
@@ -178,7 +183,8 @@ def search(query, index, tf_idf_matrix, idf_dict, doc_norms):
     query_tf = {}
     for term in query_terms:
         query_tf[term] = query_tf.get(term, 0) + 1
-        
+    
+    # First, calculate q_norm (magnitude of query vector)
     query_weights = {}
     q_norm_sq = 0
     
@@ -191,7 +197,36 @@ def search(query, index, tf_idf_matrix, idf_dict, doc_norms):
             
     q_norm = math.sqrt(q_norm_sq)
     
+    # Print query term analysis table
+    print("\n--- Query Term Analysis ---")
+    query_analysis_data = []
+    for term in sorted(query_tf.keys()):
+        tf_raw = query_tf[term]
+        log_tf = 1 + math.log10(tf_raw) if tf_raw > 0 else 0
+        idf = idf_dict.get(term, 0)
+        tf_idf = log_tf * idf
+        normalized = tf_idf / q_norm if q_norm > 0 else 0
+        
+        query_analysis_data.append([
+            term,
+            tf_raw,
+            f"{log_tf:.4f}",
+            f"{idf:.4f}",
+            f"{tf_idf:.4f}",
+            f"{normalized:.4f}"
+        ])
+    
+    if query_analysis_data:
+        print(f"{'Term':<15} | {'TF-Raw':<10} | {'log(TF)+1':<12} | {'IDF':<10} | {'TF*IDF':<10} | {'Normalized':<12}")
+        print("-" * 80)
+        for row in query_analysis_data:
+            print(f"{row[0]:<15} | {row[1]:<10} | {row[2]:<12} | {row[3]:<10} | {row[4]:<10} | {row[5]:<12}")
+    
+    # Print query length
+    print(f"\nQuery Length: {q_norm:.6f}")
+    
     scores = []
+    print("\n--- Similarity Scores ---")
     for doc in result_docs:
         dot_product = 0
         d_norm = doc_norms.get(doc, 0)
@@ -200,11 +235,12 @@ def search(query, index, tf_idf_matrix, idf_dict, doc_norms):
             if term in tf_idf_matrix and doc in tf_idf_matrix[term]:
                 d_w = tf_idf_matrix[term][doc]
                 dot_product += q_w * d_w
-                
+        
         sim = 0
         if q_norm > 0 and d_norm > 0:
             sim = dot_product / (q_norm * d_norm)
-            
+        
+        print(f"Similarity(q, {doc}) = {sim:.4f}")
         scores.append((doc, sim))
         
     scores.sort(key=lambda x: x[1], reverse=True)
@@ -231,8 +267,20 @@ def main():
         tf_data.append(row)
     print_table(tf_headers, tf_data, "Term Frequency (TF)")
     
+    # 2.5. Compute (1 + log(TF))
+    print("\nComputing (1 + log(TF))...")
+    log_tf_data = []
+    for term in sorted_terms:
+        row = [term]
+        for doc in all_docs:
+            tf = tf_matrix[term][doc]
+            log_tf_val = 1 + math.log10(tf) if tf > 0 else 0
+            row.append(int(log_tf_val))
+        log_tf_data.append(row)
+    print_table(tf_headers, log_tf_data, "(1 + log(TF)) Matrix")
+
     # 2. Compute IDF
-    print("\nComputing IDF...")
+    # print("\nComputing IDF...")
     N = len(all_docs)
     idf_dict = {}
     idf_data = []
@@ -240,9 +288,9 @@ def main():
         df = len(index[term])
         idf = math.log10(N / df) if df > 0 else 0
         idf_dict[term] = idf
-        idf_data.append([term, f"{idf:.4f}"])
-    print_table(["Term", "IDF"], idf_data, "Inverse Document Frequency (IDF)")
-    
+        idf_data.append([term, df, f"{idf:.4f}"])
+    print_table(["Term", "DF", "IDF"], idf_data, "Document Frequency (DF) and Inverse Document Frequency (IDF)")
+
     # 3. Compute TF-IDF
     print("\nComputing TF-IDF Matrix...")
     tf_idf_matrix = {}
@@ -268,17 +316,34 @@ def main():
             norm_sq += val * val
         doc_norms[doc] = math.sqrt(norm_sq)
 
+    # print_table(["Term", "IDF"], idf_data, "Inverse Document Frequency (IDF)")
+
+    # 4.5. Print Document Lengths
+    print("\nComputing Document Lengths...")
+    doc_length_data = []
+    for doc in sorted(all_docs, key=natural_sort_key):
+        length = doc_norms[doc]
+        doc_length_data.append([doc, f"{length:.4f}"])
+    print_table(["Document", "Length"], doc_length_data, "Document Lengths")
+
+    # 3.5. Compute Normalized TF-IDF
+    print("\nComputing Normalized TF-IDF Matrix...")
+    normalized_tf_idf_data = []
+    for term in sorted_terms:
+        row = [term]
+        for doc in all_docs:
+            tf_idf_val = tf_idf_matrix[term][doc]
+            d_norm = doc_norms[doc]
+            normalized_val = tf_idf_val / d_norm if d_norm > 0 else 0
+            row.append(f"{normalized_val:.4f}")
+        normalized_tf_idf_data.append(row)
+    print_table(tf_headers, normalized_tf_idf_data, "Normalized TF-IDF Matrix")
+
     # 5. Search Interface
     if len(sys.argv) > 1:
         query = " ".join(sys.argv[1:])
         print(f"\nQuery: {query}")
         results = search(query, index, tf_idf_matrix, idf_dict, doc_norms)
-        if results:
-            print("\nRelevant Documents:")
-            for doc, score in results:
-                print(f"{doc}: {score:.4f}")
-        else:
-            print("No relevant documents found.")
     else:
         print("\n--- Search Engine Ready ---")
         while True:
@@ -287,12 +352,6 @@ def main():
                 if query.lower() == 'exit':
                     break
                 results = search(query, index, tf_idf_matrix, idf_dict, doc_norms)
-                if results:
-                    print("\nRelevant Documents:")
-                    for doc, score in results:
-                        print(f"{doc}: {score:.4f}")
-                else:
-                    print("No relevant documents found.")
             except (EOFError, KeyboardInterrupt):
                 break
 
